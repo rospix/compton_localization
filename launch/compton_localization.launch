@@ -1,0 +1,30 @@
+<launch>
+
+  <arg name="uav_name" default="$(optenv UAV_NAME uav)"/>
+
+  <group ns="$(arg uav_name)">
+
+    <node name="compton_localization" pkg="nodelet" type="nodelet" args="standalone compton_localization/ComptonLocalization" output="screen">
+
+      <rosparam file="$(find compton_localization)/config/default.yaml" command="load" />
+
+      <param name="uav_name" value="$(arg uav_name)" />
+
+      <!-- subscribed topics -->
+      <remap from="~pose_in" to="compton_filter/pose_3D" />
+      <remap from="~optimizer_in" to="cone_optimizer/pose" />
+      <remap from="~odom_in" to="odometry/odom_main" />
+      <remap from="~swarm_in" to="/swarm_control" />
+
+      <!-- advertised topics -->
+      <remap from="~swarm_out" to="/swarm_control" />
+
+      <!-- services -->
+      <remap from="~search_in" to="~search" />
+      <remap from="~reference_out" to="pathfinder/reference" />
+
+    </node>
+
+  </group>
+
+</launch>

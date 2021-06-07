@@ -1,0 +1,5 @@
+<library path="lib/libComptonLocalization">
+  <class name="compton_localization/ComptonLocalization" type="compton_localization::ComptonLocalization" base_class_type="nodelet::Nodelet">
+    <description>ComptonLocalozation nodelet</description>
+  </class>
+</library>
