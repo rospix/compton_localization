@@ -12,6 +12,7 @@
 #include <mrs_lib/param_loader.h>
 #include <mrs_lib/service_client_handler.h>
 #include <mrs_lib/subscribe_handler.h>
+#include <mrs_lib/attitude_converter.h>
 
 #include <compton_localization/compton_localizationConfig.h>
 
@@ -70,13 +71,11 @@ private:
   ros::ServiceServer service_server_search;
 
   void               callbackOdometry(const nav_msgs::OdometryConstPtr &msg);
-  std::mutex         mutex_odometry;
-  nav_msgs::Odometry odometry;
+  std::mutex         mutex_odometry_;
+  nav_msgs::Odometry odometry_;
   ros::Subscriber    subscriber_odometry;
-  bool               got_odometry = false;
-  double             odometry_heading;
-  double             odometry_roll;
-  double             odometry_pitch;
+  bool               got_odometry_ = false;
+  double             heading_;
 
   geometry_msgs::PoseWithCovarianceStamped optimizer;
 
@@ -218,22 +217,16 @@ void ComptonLocalization::callbackPose(const geometry_msgs::PoseWithCovarianceSt
 
 void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg) {
 
-  if (!is_initialized_)
-    return;
+if (!is_initialized_)
+  return;
 
-  ROS_INFO_ONCE("[ComptonLocalization]: getting odometry");
+ROS_INFO_ONCE("[ComptonLocalization]: getting odometry");
 
-  std::scoped_lock lock(mutex_odometry);
+std::scoped_lock lock(mutex_odometry_);
 
-  got_odometry = true;
+got_odometry_ = true;
 
-  odometry = *msg;
-
-  // calculate the euler angles
-  tf::Quaternion quaternion_odometry;
-  quaternionMsgToTF(odometry.pose.pose.orientation, quaternion_odometry);
-  tf::Matrix3x3 m(quaternion_odometry);
-  m.getRPY(odometry_roll, odometry_pitch, odometry_heading);
+odometry_ = *msg;
 }
 
 //}
@@ -361,7 +354,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
 
   // get current angle
   double current_angle =
-      atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
+      atan2(odometry_.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry_.pose.pose.position.x - radiation_pose.pose.pose.position.x);
 
   // calculate the angle bias
   double closest_dist = 2 * M_PI;
@@ -386,13 +379,13 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
 
   current_angle += angle_bias;
 
-  std::scoped_lock lock(mutex_radiation_pose, mutex_odometry);
+  std::scoped_lock lock(mutex_radiation_pose, mutex_odometry_);
 
   // create the trajectory
   mrs_msgs::Reference new_reference;
 
-  new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 0.7);
-  new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 0.7);
+  new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 1.57);
+  new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 1.57);
   new_reference.position.z = params_.tracking_height;
   new_reference.heading = atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x);
 
@@ -412,7 +405,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
 mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
 
   // get current angle
-  double current_angle = atan2(odometry.pose.pose.position.y - searching_y, odometry.pose.pose.position.x - searching_x);
+  double current_angle = atan2(odometry_.pose.pose.position.y - searching_y, odometry_.pose.pose.position.x - searching_x);
 
   // calculate the angle bias
   double closest_dist = 2 * M_PI;
@@ -437,22 +430,15 @@ mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: angle_bias: %2.2f", angle_bias);
 
-  std::scoped_lock lock(mutex_odometry);
+  std::scoped_lock lock(mutex_odometry_);
 
   // create the trajectory
   mrs_msgs::Reference new_reference;
 
-  double current_heading = odometry_heading;
-
-  mrs_msgs::Reference new_point;
-
-  current_heading += params_.searching_heading_rate / 5.0;
-
-  new_reference.position.x = searching_x + params_.searching_radius * cos(current_angle + 0.7);
-  new_reference.position.y = searching_y + params_.searching_radius * sin(current_angle + 0.7);
+  new_reference.position.x = searching_x + params_.searching_radius * cos(current_angle + 1.57);
+  new_reference.position.y = searching_y + params_.searching_radius * sin(current_angle + 1.57);
   new_reference.position.z = params_.searching_height;
-  /* new_reference.reference.heading    = current_heading; */
-  new_point.heading = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x);
+  new_reference.heading = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x) + 1.57;
 
   return new_reference;
 }
@@ -471,7 +457,7 @@ void ComptonLocalization::timerMain([[maybe_unused]] const ros::TimerEvent &even
     return;
   }
 
-  if (!got_odometry) {
+  if (!got_odometry_) {
     return;
   }
 
@@ -520,7 +506,7 @@ void ComptonLocalization::timerSwarming([[maybe_unused]] const ros::TimerEvent &
   compton_localization::Swarm swarm_out;
 
   swarm_out.orbit_angle =
-      atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
+      atan2(odometry_.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry_.pose.pose.position.x - radiation_pose.pose.pose.position.x);
   swarm_out.header.stamp = ros::Time::now();
   swarm_out.uav_name     = _uav_name_;
 
