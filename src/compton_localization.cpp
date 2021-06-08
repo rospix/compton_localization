@@ -1,5 +1,6 @@
 /* includes //{ */
 
+#include "ros/init.h"
 #include <ros/ros.h>
 #include <nodelet/nodelet.h>
 
@@ -39,12 +40,18 @@ public:
 
 private:
   ros::NodeHandle nh_;
-  bool            is_initialized = false;
-  std::string     uav_name_;
+  bool            is_initialized_ = false;
+  std::string     _uav_name_;
 
-  ros::Publisher publisher_swarm_control;
+  // | ----------------------- publishers ----------------------- |
+
+  ros::Publisher publisher_swarm_control_;
+
+  // | --------------------- service clients -------------------- |
 
   mrs_lib::ServiceClientHandler<mrs_msgs::ReferenceStampedSrv> sc_reference_;
+
+  // | ----------------------- subscribers ---------------------- |
 
   double validateHeading(const double heading_in);
 
@@ -82,38 +89,35 @@ private:
   std::map<std::string, int>               swarm_uavs_map;
 
   ros::Timer main_timer;
-  int        main_timer_rate_;
-  void       mainTimer(const ros::TimerEvent &event);
+  double     _main_timer_rate_;
+  void       timerMain(const ros::TimerEvent &event);
 
   ros::Timer swarm_timer;
-  int        swarm_timer_rate;
-  void       swarmTimer(const ros::TimerEvent &event);
+  double     _swarm_timer_rate_;
+  void       timerSwarming(const ros::TimerEvent &event);
+
+  double searching_x, searching_y;
+
+  // | ------------------------ routines ------------------------ |
 
   mrs_msgs::Reference generateTrackingReference(void);
   mrs_msgs::Reference generateSearchingReference(void);
 
-  double searching_x, searching_y;
-
   bool callbackSearch([[maybe_unused]] std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
 
-  // --------------------------------------------------------------
-  // |                     dynamic reconfigure                    |
-  // --------------------------------------------------------------
+  // | ------------------- dynamic reconfigure ------------------ |
 
-  double     tracking_radius_, tracking_height_;
-  double     searching_radius_, searching_height_, searching_heading_rate_;
-  std::mutex mutex_params;
+  boost::recursive_mutex                                   mutex_drs_;
+  typedef compton_localization::compton_localizationConfig DrsConfig_t;
+  typedef dynamic_reconfigure::Server<DrsConfig_t>         Drs_t;
+  boost::shared_ptr<Drs_t>                                 drs_;
+  void                                                     callbackDrs(compton_localization::compton_localizationConfig &config, uint32_t level);
+  DrsConfig_t                                              params_;
+  std::mutex                                               mutex_params_;
 
-  boost::recursive_mutex                                   config_mutex_;
-  typedef compton_localization::compton_localizationConfig Config;
-  typedef dynamic_reconfigure::Server<Config>              ReconfigureServer;
-  boost::shared_ptr<ReconfigureServer>                     reconfigure_server_;
-  void                                                     drs_callback(compton_localization::compton_localizationConfig &config, uint32_t level);
-  compton_localization::compton_localizationConfig         drs_compton_localization;
-
-  void       dynamicReconfigureCallback(compton_localization::compton_localizationConfig &config, uint32_t level);
-  std::mutex mutex_drs;
+  void dynamicReconfigureCallback(compton_localization::compton_localizationConfig &config, uint32_t level);
 };
+
 //}
 
 /* inInit() //{ */
@@ -128,19 +132,25 @@ void ComptonLocalization::onInit() {
 
   mrs_lib::ParamLoader param_loader(nh_, "ComptonLocalization");
 
-  param_loader.loadParam("uav_name", uav_name_);
+  param_loader.loadParam("uav_name", _uav_name_);
 
-  param_loader.loadParam("main_timer_rate", main_timer_rate_);
-  param_loader.loadParam("swarm_timer_rate", swarm_timer_rate);
+  param_loader.loadParam("main_timer_rate", _main_timer_rate_);
+  param_loader.loadParam("swarm_timer_rate", _swarm_timer_rate_);
 
-  param_loader.loadParam("tracking/radius", tracking_radius_);
-  param_loader.loadParam("tracking/height", tracking_height_);
+  param_loader.loadParam("tracking/radius", params_.tracking_radius);
+  param_loader.loadParam("tracking/height", params_.tracking_height);
 
   param_loader.loadParam("searching/initial_position/x", searching_x);
   param_loader.loadParam("searching/initial_position/y", searching_y);
-  param_loader.loadParam("searching/radius", searching_radius_);
-  param_loader.loadParam("searching/height", searching_height_);
-  param_loader.loadParam("searching/heading_rate", searching_heading_rate_);
+
+  param_loader.loadParam("searching/radius", params_.searching_radius);
+  param_loader.loadParam("searching/height", params_.searching_height);
+  param_loader.loadParam("searching/heading_rate", params_.searching_heading_rate);
+
+  if (!param_loader.loadedSuccessfully()) {
+    ROS_ERROR("[ComptonLocalization]: Could not load all parameters!");
+    ros::requestShutdown();
+  }
 
   // | ----------------------- subscribers ---------------------- |
 
@@ -151,7 +161,7 @@ void ComptonLocalization::onInit() {
 
   // | ----------------------- publishers ----------------------- |
 
-  publisher_swarm_control = nh_.advertise<compton_localization::Swarm>("swarm_out", 1);
+  publisher_swarm_control_ = nh_.advertise<compton_localization::Swarm>("swarm_out", 1);
 
   // | --------------------- service servers -------------------- |
 
@@ -163,30 +173,19 @@ void ComptonLocalization::onInit() {
 
   // | ------------------------- timers ------------------------- |
 
-  main_timer  = nh_.createTimer(ros::Rate(main_timer_rate_), &ComptonLocalization::mainTimer, this);
-  swarm_timer = nh_.createTimer(ros::Rate(swarm_timer_rate), &ComptonLocalization::swarmTimer, this);
+  main_timer  = nh_.createTimer(ros::Rate(_main_timer_rate_), &ComptonLocalization::timerMain, this);
+  swarm_timer = nh_.createTimer(ros::Rate(_swarm_timer_rate_), &ComptonLocalization::timerSwarming, this);
 
   // | ------------------- dynamic reconfigure ------------------ |
 
-  drs_compton_localization.tracking_radius = tracking_radius_;
-  drs_compton_localization.tracking_height = tracking_height_;
-
-  drs_compton_localization.searching_radius = searching_radius_;
-  drs_compton_localization.searching_height = searching_height_;
-
-  reconfigure_server_.reset(new ReconfigureServer(config_mutex_, nh_));
-  reconfigure_server_->updateConfig(drs_compton_localization);
-  ReconfigureServer::CallbackType f = boost::bind(&ComptonLocalization::dynamicReconfigureCallback, this, _1, _2);
-  reconfigure_server_->setCallback(f);
+  drs_.reset(new Drs_t(mutex_drs_, nh_));
+  drs_->updateConfig(params_);
+  Drs_t::CallbackType f = boost::bind(&ComptonLocalization::callbackDrs, this, _1, _2);
+  drs_->setCallback(f);
 
   // | ----------------------- finish init ---------------------- |
 
-  if (!param_loader.loadedSuccessfully()) {
-    ROS_ERROR("[ComptonLocalization]: Could not load all parameters!");
-    ros::shutdown();
-  }
-
-  is_initialized = true;
+  is_initialized_ = true;
 
   ROS_INFO("[ComptonLocalization]: initialized");
 }
@@ -201,7 +200,7 @@ void ComptonLocalization::onInit() {
 
 void ComptonLocalization::callbackPose(const geometry_msgs::PoseWithCovarianceStampedConstPtr &msg) {
 
-  if (!is_initialized)
+  if (!is_initialized_)
     return;
 
   ROS_INFO_ONCE("[ComptonLocalization]: getting pose");
@@ -219,7 +218,7 @@ void ComptonLocalization::callbackPose(const geometry_msgs::PoseWithCovarianceSt
 
 void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg) {
 
-  if (!is_initialized)
+  if (!is_initialized_)
     return;
 
   ROS_INFO_ONCE("[ComptonLocalization]: getting odometry");
@@ -243,10 +242,10 @@ void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg
 
 void ComptonLocalization::callbackSwarmControl(const compton_localization::SwarmConstPtr &msg) {
 
-  if (!is_initialized)
+  if (!is_initialized_)
     return;
 
-  if (msg->uav_name == uav_name_) {
+  if (msg->uav_name == _uav_name_) {
     return;
   }
 
@@ -277,7 +276,7 @@ void ComptonLocalization::callbackSwarmControl(const compton_localization::Swarm
 
 void ComptonLocalization::callbackOptimizer(const geometry_msgs::PoseWithCovarianceStampedConstPtr &msg) {
 
-  if (!is_initialized) {
+  if (!is_initialized_) {
     return;
   }
 
@@ -292,15 +291,11 @@ void ComptonLocalization::callbackOptimizer(const geometry_msgs::PoseWithCovaria
 
 /* dynamicReconfigureCallback() //{ */
 
-void ComptonLocalization::dynamicReconfigureCallback(compton_localization::compton_localizationConfig &config, [[maybe_unused]] uint32_t level) {
+void ComptonLocalization::callbackDrs(compton_localization::compton_localizationConfig &config, [[maybe_unused]] uint32_t level) {
 
-  std::scoped_lock lock(mutex_params);
+  std::scoped_lock lock(mutex_params_);
 
-  tracking_radius_ = config.tracking_radius;
-  tracking_height_ = config.tracking_height;
-
-  searching_radius_ = config.searching_radius;
-  searching_height_ = config.searching_height;
+  params_ = config;
 
   ROS_INFO("[ComptonLocalization]: drs updated params");
 }
@@ -396,9 +391,9 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
   // create the trajectory
   mrs_msgs::Reference new_reference;
 
-  new_reference.position.x = radiation_pose.pose.pose.position.x + tracking_radius_ * cos(current_angle + 0.7);
-  new_reference.position.y = radiation_pose.pose.pose.position.y + tracking_radius_ * sin(current_angle + 0.7);
-  new_reference.position.z = tracking_height_;
+  new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 0.7);
+  new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 0.7);
+  new_reference.position.z = params_.tracking_height;
   new_reference.heading = atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x);
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
@@ -451,11 +446,11 @@ mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
 
   mrs_msgs::Reference new_point;
 
-  current_heading += searching_heading_rate_ / 5.0;
+  current_heading += params_.searching_heading_rate / 5.0;
 
-  new_reference.position.x = searching_x + searching_radius_ * cos(current_angle + 0.7);
-  new_reference.position.y = searching_y + searching_radius_ * sin(current_angle + 0.7);
-  new_reference.position.z = searching_height_;
+  new_reference.position.x = searching_x + params_.searching_radius * cos(current_angle + 0.7);
+  new_reference.position.y = searching_y + params_.searching_radius * sin(current_angle + 0.7);
+  new_reference.position.z = params_.searching_height;
   /* new_reference.reference.heading    = current_heading; */
   new_point.heading = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x);
 
@@ -470,9 +465,9 @@ mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
 
 /* mainTimer() //{ */
 
-void ComptonLocalization::mainTimer([[maybe_unused]] const ros::TimerEvent &event) {
+void ComptonLocalization::timerMain([[maybe_unused]] const ros::TimerEvent &event) {
 
-  if (!is_initialized) {
+  if (!is_initialized_) {
     return;
   }
 
@@ -516,9 +511,9 @@ void ComptonLocalization::mainTimer([[maybe_unused]] const ros::TimerEvent &even
 
 /* swarmTimer() //{ */
 
-void ComptonLocalization::swarmTimer([[maybe_unused]] const ros::TimerEvent &event) {
+void ComptonLocalization::timerSwarming([[maybe_unused]] const ros::TimerEvent &event) {
 
-  if (!is_initialized) {
+  if (!is_initialized_) {
     return;
   }
 
@@ -527,13 +522,13 @@ void ComptonLocalization::swarmTimer([[maybe_unused]] const ros::TimerEvent &eve
   swarm_out.orbit_angle =
       atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
   swarm_out.header.stamp = ros::Time::now();
-  swarm_out.uav_name     = uav_name_;
+  swarm_out.uav_name     = _uav_name_;
 
   try {
-    publisher_swarm_control.publish(swarm_out);
+    publisher_swarm_control_.publish(swarm_out);
   }
   catch (...) {
-    ROS_ERROR("Exception caught during publishing topic %s.", publisher_swarm_control.getTopic().c_str());
+    ROS_ERROR("Exception caught during publishing topic %s.", publisher_swarm_control_.getTopic().c_str());
   }
 }
 
