@@ -2,7 +2,7 @@ main_timer_rate: 1.0
 swarm_timer_rate: 30.0
 
 tracking:
-  radius: 3.0
+  radius: 5.0
   height: 1.0
 
 searching:
