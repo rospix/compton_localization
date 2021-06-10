@@ -23,6 +23,7 @@
 #include <nav_msgs/Odometry.h>
 
 #include <std_srvs/Trigger.h>
+#include <std_srvs/SetBool.h>
 
 #include <tf/transform_datatypes.h>
 
@@ -54,12 +55,14 @@ private:
 
   // | ----------------------- subscribers ---------------------- |
 
+  std::atomic<bool> active_ = false;
+
   double validateHeading(const double heading_in);
 
   ros::Subscriber subscriber_pose;
   void            callbackPose(const geometry_msgs::PoseWithCovarianceStampedConstPtr &msg);
-  bool            got_pose = false;
-  std::mutex      mutex_radiation_pose;
+  bool            got_pose_ = false;
+  std::mutex      mutex_radiation_pose_;
 
   geometry_msgs::PoseWithCovarianceStamped radiation_pose;
 
@@ -68,7 +71,7 @@ private:
   bool            got_optimizer = false;
   std::mutex      mutex_optimizer;
 
-  ros::ServiceServer service_server_search;
+  ros::ServiceServer service_server_activate_;
 
   void               callbackOdometry(const nav_msgs::OdometryConstPtr &msg);
   std::mutex         mutex_odometry_;
@@ -102,7 +105,7 @@ private:
   mrs_msgs::Reference generateTrackingReference(void);
   mrs_msgs::Reference generateSearchingReference(void);
 
-  bool callbackSearch([[maybe_unused]] std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
+  bool callbackActivate([[maybe_unused]] std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res);
 
   // | ------------------- dynamic reconfigure ------------------ |
 
@@ -164,7 +167,7 @@ void ComptonLocalization::onInit() {
 
   // | --------------------- service servers -------------------- |
 
-  service_server_search = nh_.advertiseService("search_in", &ComptonLocalization::callbackSearch, this);
+  service_server_activate_ = nh_.advertiseService("activate_in", &ComptonLocalization::callbackActivate, this);
 
   // | --------------------- service clients -------------------- |
 
@@ -204,9 +207,9 @@ void ComptonLocalization::callbackPose(const geometry_msgs::PoseWithCovarianceSt
 
   ROS_INFO_ONCE("[ComptonLocalization]: getting pose");
 
-  std::scoped_lock lock(mutex_radiation_pose);
+  std::scoped_lock lock(mutex_radiation_pose_);
 
-  got_pose = true;
+  got_pose_ = true;
 
   radiation_pose = *msg;
 }
@@ -217,16 +220,16 @@ void ComptonLocalization::callbackPose(const geometry_msgs::PoseWithCovarianceSt
 
 void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg) {
 
-if (!is_initialized_)
-  return;
+  if (!is_initialized_)
+    return;
 
-ROS_INFO_ONCE("[ComptonLocalization]: getting odometry");
+  ROS_INFO_ONCE("[ComptonLocalization]: getting odometry");
 
-std::scoped_lock lock(mutex_odometry_);
+  std::scoped_lock lock(mutex_odometry_);
 
-got_odometry_ = true;
+  got_odometry_ = true;
 
-odometry_ = *msg;
+  odometry_ = *msg;
 }
 
 //}
@@ -295,15 +298,18 @@ void ComptonLocalization::callbackDrs(compton_localization::compton_localization
 
 //}
 
-/* callbackSearch() //{ */
+/* callbackActivate() //{ */
 
-bool ComptonLocalization::callbackSearch([[maybe_unused]] std_srvs::Trigger::Request &req, [[maybe_unused]] std_srvs::Trigger::Response &res) {
+bool ComptonLocalization::callbackActivate([[maybe_unused]] std_srvs::SetBool::Request &req, [[maybe_unused]] std_srvs::SetBool::Response &res) {
 
-  got_pose = false;
+  active_ = req.data;
 
-  ROS_INFO("[ComptonLocalization]: switching back to search");
+  std::stringstream ss;
+  ss << std::string(active_ ? "activating" : "de-activating");
 
-  res.message = "";
+  ROS_INFO("[ComptonLocalization]: %s", ss.str().c_str());
+
+  res.message = ss.str();
   res.success = true;
 
   return true;
@@ -379,7 +385,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
 
   current_angle += angle_bias;
 
-  std::scoped_lock lock(mutex_radiation_pose, mutex_odometry_);
+  std::scoped_lock lock(mutex_radiation_pose_, mutex_odometry_);
 
   // create the trajectory
   mrs_msgs::Reference new_reference;
@@ -387,7 +393,8 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
   new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 1.57);
   new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 1.57);
   new_reference.position.z = params_.tracking_height;
-  new_reference.heading = atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x) - 1.57;
+  new_reference.heading =
+      atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x) - 1.57;
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
 
@@ -438,7 +445,7 @@ mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
   new_reference.position.x = searching_x + params_.searching_radius * cos(current_angle + 1.57);
   new_reference.position.y = searching_y + params_.searching_radius * sin(current_angle + 1.57);
   new_reference.position.z = params_.searching_height;
-  new_reference.heading = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x) + 1.57;
+  new_reference.heading    = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x) + 1.57;
 
   return new_reference;
 }
@@ -461,23 +468,23 @@ void ComptonLocalization::timerMain([[maybe_unused]] const ros::TimerEvent &even
     return;
   }
 
+  if (!active_) {
+    ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: not active");
+    return;
+  }
+
+  if (!got_pose_) {
+    return;
+  }
+
   mrs_msgs::ReferenceStampedSrv new_reference_srv;
 
   new_reference_srv.request.header.stamp    = ros::Time::now();
   new_reference_srv.request.header.frame_id = "stable_origin";
 
-  if (got_pose) {
+  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: generating tracking reference");
 
-    ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: generating tracking reference");
-
-    new_reference_srv.request.reference = generateTrackingReference();
-
-  } else {
-
-    ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: generating searching reference");
-
-    new_reference_srv.request.reference = generateSearchingReference();
-  }
+  new_reference_srv.request.reference = generateTrackingReference();
 
   ROS_INFO("[ComptonLocalization]: reference: [%.2f, %.2f, %.2f]", new_reference_srv.request.reference.position.x,
            new_reference_srv.request.reference.position.y, new_reference_srv.request.reference.position.z);

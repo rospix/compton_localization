@@ -20,7 +20,7 @@
       <remap from="~swarm_out" to="/swarm_control" />
 
       <!-- services -->
-      <remap from="~search_in" to="~search" />
+      <remap from="~activate_in" to="~activate" />
       <remap from="~reference_out" to="pathfinder/reference" />
 
     </node>
