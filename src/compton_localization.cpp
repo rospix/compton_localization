@@ -98,12 +98,9 @@ private:
   double     _swarm_timer_rate_;
   void       timerSwarming(const ros::TimerEvent &event);
 
-  double searching_x, searching_y;
-
   // | ------------------------ routines ------------------------ |
 
   mrs_msgs::Reference generateTrackingReference(void);
-  mrs_msgs::Reference generateSearchingReference(void);
 
   bool callbackActivate([[maybe_unused]] std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res);
 
@@ -141,13 +138,6 @@ void ComptonLocalization::onInit() {
 
   param_loader.loadParam("tracking/radius", params_.tracking_radius);
   param_loader.loadParam("tracking/height", params_.tracking_height);
-
-  param_loader.loadParam("searching/initial_position/x", searching_x);
-  param_loader.loadParam("searching/initial_position/y", searching_y);
-
-  param_loader.loadParam("searching/radius", params_.searching_radius);
-  param_loader.loadParam("searching/height", params_.searching_height);
-  param_loader.loadParam("searching/heading_rate", params_.searching_heading_rate);
 
   if (!param_loader.loadedSuccessfully()) {
     ROS_ERROR("[ComptonLocalization]: Could not load all parameters!");
@@ -397,55 +387,6 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
       atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x) - 1.57;
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
-
-  // update the searching coordinates
-  searching_x = radiation_pose.pose.pose.position.x;
-  searching_y = radiation_pose.pose.pose.position.y;
-
-  return new_reference;
-}
-
-//}
-
-/* generateSearchingReference() //{ */
-
-mrs_msgs::Reference ComptonLocalization::generateSearchingReference(void) {
-
-  // get current angle
-  double current_angle = atan2(odometry_.pose.pose.position.y - searching_y, odometry_.pose.pose.position.x - searching_x);
-
-  // calculate the angle bias
-  double closest_dist = 2 * M_PI;
-  double angle_bias   = 0;
-
-  {
-    std::scoped_lock lock(mutex_swarm_uavs);
-
-    for (std::vector<compton_localization::Swarm>::iterator it = swarm_uavs_list.begin(); it != swarm_uavs_list.end(); it++) {
-
-      double dist = fabs(validateHeading(it->orbit_angle) - validateHeading(current_angle));
-
-      if (dist < closest_dist) {
-
-        closest_dist = dist;
-        angle_bias   = (it->orbit_angle - current_angle > 0) ? -0.10 : 0.10;
-      }
-    }
-  }
-
-  current_angle += angle_bias;
-
-  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: angle_bias: %2.2f", angle_bias);
-
-  std::scoped_lock lock(mutex_odometry_);
-
-  // create the trajectory
-  mrs_msgs::Reference new_reference;
-
-  new_reference.position.x = searching_x + params_.searching_radius * cos(current_angle + 0.7);
-  new_reference.position.y = searching_y + params_.searching_radius * sin(current_angle + 0.7);
-  new_reference.position.z = params_.searching_height;
-  new_reference.heading    = atan2(new_reference.position.y - searching_y, new_reference.position.x - searching_x) + 1.57;
 
   return new_reference;
 }
