@@ -380,11 +380,11 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
   // create the trajectory
   mrs_msgs::Reference new_reference;
 
-  new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 1.0);
-  new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 1.0);
+  new_reference.position.x = radiation_pose.pose.pose.position.x + params_.tracking_radius * cos(current_angle - 1.0);
+  new_reference.position.y = radiation_pose.pose.pose.position.y + params_.tracking_radius * sin(current_angle - 1.0);
   new_reference.position.z = params_.tracking_height;
   new_reference.heading =
-      atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x) - 1.57;
+      atan2(radiation_pose.pose.pose.position.y - new_reference.position.y, radiation_pose.pose.pose.position.x - new_reference.position.x) + 1.57;
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
 
