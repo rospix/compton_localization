@@ -41,9 +41,12 @@ public:
   virtual void onInit();
 
 private:
-  ros::NodeHandle nh_;
-  bool            is_initialized_ = false;
-  std::string     _uav_name_;
+  ros::NodeHandle          nh_;
+  bool                     is_initialized_ = false;
+  std::string              _uav_name_;
+  std::vector<std::string> _uav_names_;
+
+  std::string _swarm_topic_name_;
 
   // | ----------------------- publishers ----------------------- |
 
@@ -82,9 +85,11 @@ private:
 
   geometry_msgs::PoseWithCovarianceStamped optimizer;
 
-  ros::Subscriber subscriber_swarm_control;
-  void            callbackSwarmControl(const compton_localization::SwarmConstPtr &msg);
-  bool            got_swarm = false;
+  std::vector<mrs_lib::SubscribeHandler<compton_localization::Swarm>> sh_swarm_control_;
+
+  void callbackSwarmControl(mrs_lib::SubscribeHandler<compton_localization::Swarm> &sh_ptr);
+
+  bool got_swarm = false;
 
   std::mutex                               mutex_swarm_uavs;
   std::vector<compton_localization::Swarm> swarm_uavs_list;
@@ -132,6 +137,9 @@ void ComptonLocalization::onInit() {
   mrs_lib::ParamLoader param_loader(nh_, "ComptonLocalization");
 
   param_loader.loadParam("uav_name", _uav_name_);
+  param_loader.loadParam("uav_names", _uav_names_);
+
+  param_loader.loadParam("swarm_topic", _swarm_topic_name_);
 
   param_loader.loadParam("main_timer_rate", _main_timer_rate_);
   param_loader.loadParam("swarm_timer_rate", _swarm_timer_rate_);
@@ -146,10 +154,29 @@ void ComptonLocalization::onInit() {
 
   // | ----------------------- subscribers ---------------------- |
 
-  subscriber_pose          = nh_.subscribe("pose_in", 1, &ComptonLocalization::callbackPose, this, ros::TransportHints().tcpNoDelay());
-  subscriber_optimizer     = nh_.subscribe("optimizer_in", 1, &ComptonLocalization::callbackOptimizer, this, ros::TransportHints().tcpNoDelay());
-  subscriber_odometry      = nh_.subscribe("odom_in", 1, &ComptonLocalization::callbackOdometry, this, ros::TransportHints().tcpNoDelay());
-  subscriber_swarm_control = nh_.subscribe("swarm_in", 1, &ComptonLocalization::callbackSwarmControl, this, ros::TransportHints().tcpNoDelay());
+  subscriber_pose      = nh_.subscribe("pose_in", 1, &ComptonLocalization::callbackPose, this, ros::TransportHints().tcpNoDelay());
+  subscriber_optimizer = nh_.subscribe("optimizer_in", 1, &ComptonLocalization::callbackOptimizer, this, ros::TransportHints().tcpNoDelay());
+  subscriber_odometry  = nh_.subscribe("odom_in", 1, &ComptonLocalization::callbackOdometry, this, ros::TransportHints().tcpNoDelay());
+
+  mrs_lib::SubscribeHandlerOptions shopts;
+  shopts.nh                 = nh_;
+  shopts.node_name          = "ComptonLocalization";
+  shopts.no_message_timeout = mrs_lib::no_timeout;
+  shopts.threadsafe         = true;
+  shopts.autostart          = true;
+  shopts.queue_size         = 10;
+  shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
+
+  /* subscriber_swarm_control = nh_.subscribe("swarm_in", 1, &ComptonLocalization::callbackSwarmControl, this, ros::TransportHints().tcpNoDelay()); */
+
+  for (int i = 0; i < int(_uav_names_.size()); i++) {
+
+    std::string topic_name = std::string("/") + _uav_names_[i] + std::string("/") + _swarm_topic_name_;
+
+    ROS_INFO("[MpcTracker]: subscribing to %s", topic_name.c_str());
+
+    sh_swarm_control_.push_back(mrs_lib::SubscribeHandler<compton_localization::Swarm>(shopts, topic_name, &ComptonLocalization::callbackSwarmControl, this));
+  }
 
   // | ----------------------- publishers ----------------------- |
 
@@ -226,10 +253,12 @@ void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg
 
 /* callbackSwarmControl() //{ */
 
-void ComptonLocalization::callbackSwarmControl(const compton_localization::SwarmConstPtr &msg) {
+void ComptonLocalization::callbackSwarmControl(mrs_lib::SubscribeHandler<compton_localization::Swarm> &sh_ptr) {
 
   if (!is_initialized_)
     return;
+
+  auto msg = sh_ptr.getMsg();
 
   if (msg->uav_name == _uav_name_) {
     return;
@@ -366,7 +395,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
       if (dist < closest_dist) {
 
         closest_dist = dist;
-        angle_bias   = (it->orbit_angle - current_angle > 0) ? -0.10 : 0.10;
+        angle_bias   = (it->orbit_angle - current_angle > 0) ? -0.50 : 0.50;
       }
     }
   }
