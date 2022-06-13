@@ -18,7 +18,8 @@
       <param name="swarm_topic" value="$(arg swarm_topic)" />
 
       <!-- subscribed topics -->
-      <remap from="~pose_in" to="compton_filter/pose_3D" />
+      <!-- <remap from="~pose_in" to="compton_filter/pose_3D" /> -->
+      <remap from="~pose_in" to="compton_filter/pose_2D" />
       <remap from="~optimizer_in" to="cone_optimizer/pose" />
       <remap from="~odom_in" to="odometry/odom_main" />
 
