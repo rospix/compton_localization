@@ -29,7 +29,7 @@
       <!-- services -->
       <remap from="~activate_in" to="~activate" />
       <remap from="~reference_out" to="pathfinder/reference" />
-      <!-- <remap from="~reference_out" to="control_manager/reference" /> -->
+      <remap from="~trajectory_reference_out" to="control_manager/trajectory_reference" />
 
     </node>
 

@@ -2,5 +2,12 @@ main_timer_rate: 1.0
 swarm_timer_rate: 30.0
 
 tracking:
+
+  mode: 0 # {0 == trajectory, 1 = path}
   radius: 5.0
   height: 2.5
+
+  trajectory:
+
+    speed: 5.0
+    steps: 20
