@@ -419,7 +419,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
       if (abs(dist) < closest_dist) {
 
         closest_dist = abs(dist);
-        angle_bias   = (dist > 0) ? -0.10 : 0.10;
+        angle_bias   = (dist > 0) ? -0.3 : 0.3;
       }
     }
   }
@@ -472,7 +472,7 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
         ROS_INFO("[ComptonLocalization]: dist = %.2f", dist);
 
         closest_dist = abs(dist);
-        angle_bias   = (dist > 0) ? -0.10 : 0.10;
+        angle_bias   = (dist > 0) ? -0.3 : 0.3;
       }
     }
   }
