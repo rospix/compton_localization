@@ -107,7 +107,8 @@ private:
 
   std::vector<mrs_lib::SubscribeHandler<compton_localization::Swarm>> sh_swarm_control_;
 
-  void callbackSwarmControl(mrs_lib::SubscribeHandler<compton_localization::Swarm> &sh_ptr);
+  void callbackSwarmControl(const compton_localization::Swarm::ConstPtr msg);
+  void callbackTimeout(const std::string &topic_name, const ros::Time &last_msg_time);
 
   std::atomic<bool> got_swarm_ = false;
 
@@ -200,7 +201,8 @@ void ComptonLocalization::onInit() {
 
     ROS_INFO("[MpcTracker]: subscribing to %s", topic_name.c_str());
 
-    sh_swarm_control_.push_back(mrs_lib::SubscribeHandler<compton_localization::Swarm>(shopts, topic_name, &ComptonLocalization::callbackSwarmControl, this));
+    sh_swarm_control_.push_back(mrs_lib::SubscribeHandler<compton_localization::Swarm>(shopts, topic_name, &ComptonLocalization::callbackTimeout, this,
+                                                                                       &ComptonLocalization::callbackSwarmControl, this));
   }
 
   // | ----------------------- publishers ----------------------- |
@@ -279,12 +281,10 @@ void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg
 
 /* callbackSwarmControl() //{ */
 
-void ComptonLocalization::callbackSwarmControl(mrs_lib::SubscribeHandler<compton_localization::Swarm> &sh_ptr) {
+void ComptonLocalization::callbackSwarmControl(const compton_localization::Swarm::ConstPtr msg) {
 
   if (!is_initialized_)
     return;
-
-  auto msg = sh_ptr.getMsg();
 
   if (msg->uav_name == _uav_name_) {
     return;
@@ -311,6 +311,15 @@ void ComptonLocalization::callbackSwarmControl(mrs_lib::SubscribeHandler<compton
   }
 }
 
+//}
+
+/* callbackTimeout() //{ */
+void ComptonLocalization::callbackTimeout(const std::string &topic_name, const ros::Time &last_msg_time) {
+  if (!is_initialized_) {
+    return;
+  }
+  ROS_ERROR("[ComptonLocalization]: Did not receive a message on topic %s for %.2f seconds", topic_name.c_str(), (ros::Time::now() - last_msg_time).toSec());
+}
 //}
 
 /* callbackOptimizer() //{ */
@@ -490,7 +499,7 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
   new_trajectory.fly_now         = true;
   new_trajectory.use_heading     = true;
   new_trajectory.header.stamp    = ros::Time::now();
-  new_trajectory.header.frame_id = "gps_origin";
+  new_trajectory.header.frame_id = "world_origin";
 
   for (int i = 0; i < _tracking_trajectory_steps_; i++) {
 
