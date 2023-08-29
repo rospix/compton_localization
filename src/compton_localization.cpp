@@ -159,7 +159,7 @@ void ComptonLocalization::onInit() {
   mrs_lib::ParamLoader param_loader(nh_, "ComptonLocalization");
 
   param_loader.loadParam("uav_name", _uav_name_);
-  param_loader.loadParam("uav_names", _uav_names_);
+  param_loader.loadParam("network/robot_names", _uav_names_);
 
   param_loader.loadParam("swarm_topic", _swarm_topic_name_);
 
@@ -444,7 +444,7 @@ mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
   new_reference.position.y = radiation_pose_.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 1.0);
   new_reference.position.z = params_.tracking_height;
   new_reference.heading =
-      atan2(radiation_pose_.pose.pose.position.y - new_reference.position.y, radiation_pose_.pose.pose.position.x - new_reference.position.x) - 1.57;
+      atan2(radiation_pose_.pose.pose.position.y - new_reference.position.y, radiation_pose_.pose.pose.position.x - new_reference.position.x);
 
   ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
 
@@ -508,7 +508,7 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
     new_point.position.x = radiation_pose.pose.pose.position.x + params.tracking_radius * cos(current_angle);
     new_point.position.y = radiation_pose.pose.pose.position.y + params.tracking_radius * sin(current_angle);
     new_point.position.z = params.tracking_height;
-    new_point.heading    = atan2(radiation_pose.pose.pose.position.y - new_point.position.y, radiation_pose.pose.pose.position.x - new_point.position.x) - 1.57;
+    new_point.heading    = atan2(radiation_pose.pose.pose.position.y - new_point.position.y, radiation_pose.pose.pose.position.x - new_point.position.x);
 
     current_angle += angular_step;
 

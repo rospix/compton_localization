@@ -3,15 +3,15 @@
   <arg name="uav_name" default="$(optenv UAV_NAME uav)"/>
   <arg name="swarm_topic" default="compton_localization/swarm_control"/>
 
-  <arg name="uav_names" default="" />
   <arg name="custom_config" default="" />
+  <arg name="network_config" default="" />
 
   <group ns="$(arg uav_name)">
 
     <node name="compton_localization" pkg="nodelet" type="nodelet" args="standalone compton_localization/ComptonLocalization" output="screen">
 
       <rosparam file="$(find compton_localization)/config/default.yaml" command="load" />
-      <rosparam if="$(eval not arg('uav_names') == '')" file="$(arg uav_names)" />
+      <rosparam if="$(eval not arg('network_config') == '')" file="$(arg network_config)" />
       <rosparam if="$(eval not arg('custom_config') == '')" file="$(arg custom_config)" />
 
       <param name="uav_name" value="$(arg uav_name)" />
