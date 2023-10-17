@@ -508,7 +508,7 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
     new_point.position.x = radiation_pose.pose.pose.position.x + params.tracking_radius * cos(current_angle);
     new_point.position.y = radiation_pose.pose.pose.position.y + params.tracking_radius * sin(current_angle);
     new_point.position.z = params.tracking_height;
-    new_point.heading    = atan2(radiation_pose.pose.pose.position.y - new_point.position.y, radiation_pose.pose.pose.position.x - new_point.position.x);
+    new_point.heading    = atan2(radiation_pose.pose.pose.position.y - new_point.position.y, radiation_pose.pose.pose.position.x - new_point.position.x) - 1.57;
 
     current_angle += angular_step;
 

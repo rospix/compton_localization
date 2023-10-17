@@ -9,18 +9,24 @@ find_package(Eigen3 REQUIRED)
 set(Eigen_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIRS})
 set(Eigen_LIBRARIES ${Eigen_LIBRARIES})
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  std_msgs
-  geometry_msgs
-  sensor_msgs
-  nodelet
+set(CATKIN_DEPENDENCIES
   cmake_modules
+  dynamic_reconfigure
+  geometry_msgs
+  message_generation
+  message_runtime
   mrs_lib
   mrs_msgs
+  nodelet
   rad_msgs
-  dynamic_reconfigure
-  message_generation
+  roscpp
+  rospy
+  sensor_msgs
+  std_msgs
+  )
+
+find_package(catkin REQUIRED COMPONENTS
+  ${CATKIN_DEPENDENCIES}
 )
 
 generate_dynamic_reconfigure_options(
@@ -41,7 +47,7 @@ generate_messages(DEPENDENCIES
 
 catkin_package(
 #  INCLUDE_DIRS include
-   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime mrs_lib rad_msgs mrs_msgs
+   CATKIN_DEPENDS ${CATKIN_DEPENDENCIES}
    LIBRARIES ComptonLocalization
    DEPENDS Eigen
 )
