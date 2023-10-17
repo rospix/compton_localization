@@ -11,8 +11,8 @@
     <node name="compton_localization" pkg="nodelet" type="nodelet" args="standalone compton_localization/ComptonLocalization" output="screen">
 
       <rosparam file="$(find compton_localization)/config/default.yaml" command="load" />
-      <rosparam if="$(eval not arg('network_config') == '')" file="$(arg network_config)" />
-      <rosparam if="$(eval not arg('custom_config') == '')" file="$(arg custom_config)" />
+      <rosparam if="$(eval not arg('network_config') == '')" file="$(arg network_config)" command="load" />
+      <rosparam if="$(eval not arg('custom_config') == '')" file="$(arg custom_config)" command="load" />
 
       <param name="uav_name" value="$(arg uav_name)" />
       <param name="swarm_topic" value="$(arg swarm_topic)" />
