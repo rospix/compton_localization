@@ -10,4 +10,3 @@ tracking:
   trajectory:
 
     speed: 5.0
-    steps: 20
