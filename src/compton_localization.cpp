@@ -63,9 +63,12 @@ private:
   std::string              _uav_name_;
   std::vector<std::string> _uav_names_;
 
-  std::string _swarm_topic_name_;
-  int         _tracking_mode_;
-  double      _tracking_trajectory_speed_;
+  std::string             _swarm_topic_name_;
+  int                     _tracking_mode_;
+  double                  _tracking_trajectory_speed_;
+  double                  _min_trajectory_speed_;
+  int                     _tracking_trajectory_steps_;
+  static constexpr double tracking_trajectory_dt_ = 0.2;
 
   // | ----------------------- publishers ----------------------- |
 
@@ -168,6 +171,8 @@ void ComptonLocalization::onInit() {
 
   param_loader.loadParam("tracking/mode", _tracking_mode_);
   param_loader.loadParam("tracking/trajectory/speed", _tracking_trajectory_speed_);
+  param_loader.loadParam("tracking/trajectory/steps", _tracking_trajectory_steps_);
+  param_loader.loadParam("tracking/trajectory/min_speed", _min_trajectory_speed_);
 
   if (!param_loader.loadedSuccessfully()) {
     ROS_ERROR("[ComptonLocalization]: Could not load all parameters!");
@@ -428,12 +433,11 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
   double current_angle =
       atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
 
-  // calculate the angle bias
+  double base_angular_change = _tracking_trajectory_speed_ * (_tracking_trajectory_steps_ * tracking_trajectory_dt_) / params.tracking_radius;
+  double base_angular_step   = base_angular_change / _tracking_trajectory_steps_;
+
   double closest_angle         = 2.0 * M_PI;
   double optimal_spacing_angle = 2.0 * M_PI / _uav_names_.size();
-  double trajectory_time       = (optimal_spacing_angle * params.tracking_radius) / _tracking_trajectory_speed_;
-  double hysteresis            = 0.2 * optimal_spacing_angle;
-
   {
     std::scoped_lock lock(mutex_swarm_uavs_);
 
@@ -448,28 +452,21 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
         closest_angle = angle;
       }
     }
-
-
-    ROS_INFO("[ComptonLocalization]: Closest angle: %.2f rad", closest_angle);
   }
 
-  double traj_start_angle = current_angle;
+  double min_angular_change = _min_trajectory_speed_ * (_tracking_trajectory_steps_ * tracking_trajectory_dt_) / params.tracking_radius;
 
-  double traj_end_angle;
-  if (abs(closest_angle) + hysteresis > optimal_spacing_angle && abs(closest_angle) - hysteresis < optimal_spacing_angle) {
-    traj_end_angle = current_angle + optimal_spacing_angle;
-  } else {
-    traj_end_angle = closest_angle > 0 ? current_angle + closest_angle - optimal_spacing_angle : current_angle - closest_angle + optimal_spacing_angle;
-  }
+  ROS_INFO("[ComptonLocalization]: CURRENT ANGLE: %.2f", current_angle);
+  ROS_INFO("[ComptonLocalization]: CLOSEST ANGLE: %.2f rad", closest_angle);
+  ROS_INFO("[ComptonLocalization]: OPTIMAL SPACING: %.2f", optimal_spacing_angle);
 
-  double traj_angle              = abs(sradians::diff(traj_start_angle, traj_end_angle));
-  double target_angular_velocity = (traj_angle / trajectory_time);
-  double angular_step            = target_angular_velocity * 0.15;
+  // only change by increasing speed
+  double change_needed = closest_angle < 0 ? optimal_spacing_angle + closest_angle : closest_angle - optimal_spacing_angle;
+  ROS_INFO("[ComptonLocalization]: CHANGE NEEDED: %.2f", change_needed);
 
-  int num_steps = std::floor(traj_angle / angular_step);
-  ROS_INFO("[ComptonLocalization]: TRAJ ANGLE: %.2f", traj_angle);
-  ROS_INFO("[ComptonLocalization]: NUM STEPS: %d", num_steps);
-  ROS_INFO("[ComptonLocalization]: VELOCITY: %.2f", target_angular_velocity * params.tracking_radius);
+  // prevent backwards motion
+  double angular_change = std::max(base_angular_change + change_needed, min_angular_change);
+  double angular_step   = angular_change / _tracking_trajectory_steps_;
 
   // create the trajectory
   mrs_msgs::TrajectoryReference new_trajectory;
@@ -478,8 +475,9 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
   new_trajectory.use_heading     = true;
   new_trajectory.header.stamp    = ros::Time::now();
   new_trajectory.header.frame_id = "world_origin";
+  new_trajectory.dt              = tracking_trajectory_dt_;
 
-  for (int i = 0; i < num_steps; i++) {
+  for (int i = 0; i < _tracking_trajectory_steps_; i++) {
 
     mrs_msgs::Reference new_point;
 

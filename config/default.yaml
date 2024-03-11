@@ -10,3 +10,6 @@ tracking:
   trajectory:
 
     speed: 5.0
+    steps: 30
+
+    min_speed: 0.5
