@@ -43,8 +43,6 @@ using sradians = mrs_lib::geometry::sradians;
 
 /* defines //{ */
 
-#define MODE_TRAJECTORY 0
-#define MODE_PATH 1
 
 //}
 
@@ -64,7 +62,6 @@ private:
   std::vector<std::string> _uav_names_;
 
   std::string             _swarm_topic_name_;
-  int                     _tracking_mode_;
   double                  _tracking_trajectory_speed_;
   double                  _min_trajectory_speed_;
   int                     _tracking_trajectory_steps_;
@@ -72,7 +69,7 @@ private:
 
   // | ----------------------- publishers ----------------------- |
 
-  ros::Publisher publisher_swarm_control_;
+  ros::Publisher publisher_swarm_;
 
   // | --------------------- service clients -------------------- |
 
@@ -105,9 +102,9 @@ private:
 
   geometry_msgs::PoseWithCovarianceStamped optimizer_;
 
-  std::vector<mrs_lib::SubscribeHandler<compton_localization::Swarm>> sh_swarm_control_;
+  std::vector<mrs_lib::SubscribeHandler<compton_localization::Swarm>> sh_swarm_;
 
-  void callbackSwarmControl(const compton_localization::Swarm::ConstPtr msg);
+  void callbackSwarm(const compton_localization::Swarm::ConstPtr msg);
   void callbackTimeout(const std::string &topic_name, const ros::Time &last_msg_time);
 
   std::atomic<bool> got_swarm_ = false;
@@ -169,7 +166,6 @@ void ComptonLocalization::onInit() {
   param_loader.loadParam("tracking/radius", params_.tracking_radius);
   param_loader.loadParam("tracking/height", params_.tracking_height);
 
-  param_loader.loadParam("tracking/mode", _tracking_mode_);
   param_loader.loadParam("tracking/trajectory/speed", _tracking_trajectory_speed_);
   param_loader.loadParam("tracking/trajectory/steps", _tracking_trajectory_steps_);
   param_loader.loadParam("tracking/trajectory/min_speed", _min_trajectory_speed_);
@@ -194,21 +190,18 @@ void ComptonLocalization::onInit() {
   shopts.queue_size         = 10;
   shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
 
-  /* subscriber_swarm_control = nh_.subscribe("swarm_in", 1, &ComptonLocalization::callbackSwarmControl, this, ros::TransportHints().tcpNoDelay()); */
-
   for (int i = 0; i < int(_uav_names_.size()); i++) {
 
     std::string topic_name = std::string("/") + _uav_names_[i] + std::string("/") + _swarm_topic_name_;
 
     ROS_INFO("[MpcTracker]: subscribing to %s", topic_name.c_str());
 
-    sh_swarm_control_.push_back(mrs_lib::SubscribeHandler<compton_localization::Swarm>(shopts, topic_name, &ComptonLocalization::callbackTimeout, this,
-                                                                                       &ComptonLocalization::callbackSwarmControl, this));
+    sh_swarm_.push_back(mrs_lib::SubscribeHandler<compton_localization::Swarm>(shopts, topic_name, &ComptonLocalization::callbackTimeout, this, &ComptonLocalization::callbackSwarm, this));
   }
 
   // | ----------------------- publishers ----------------------- |
 
-  publisher_swarm_control_ = nh_.advertise<compton_localization::Swarm>("swarm_out", 1);
+  publisher_swarm_ = nh_.advertise<compton_localization::Swarm>("swarm_out", 1);
 
   // | --------------------- service servers -------------------- |
 
@@ -280,9 +273,9 @@ void ComptonLocalization::callbackOdometry(const nav_msgs::OdometryConstPtr &msg
 
 //}
 
-/* callbackSwarmControl() //{ */
+/* callbackSwarm () //{ */
 
-void ComptonLocalization::callbackSwarmControl(const compton_localization::Swarm::ConstPtr msg) {
+void ComptonLocalization::callbackSwarm(const compton_localization::Swarm::ConstPtr msg) {
 
   if (!is_initialized_)
     return;
@@ -372,55 +365,6 @@ bool ComptonLocalization::callbackActivate([[maybe_unused]] std_srvs::SetBool::R
 // |                       custom routines                      |
 // --------------------------------------------------------------
 
-/* generateTrackingReference() //{ */
-
-mrs_msgs::Reference ComptonLocalization::generateTrackingReference(void) {
-
-  auto radiation_pose = mrs_lib::get_mutexed(mutex_radiation_pose_, radiation_pose_);
-
-  // get current angle
-  double current_angle =
-      atan2(odometry_.pose.pose.position.y - radiation_pose_.pose.pose.position.y, odometry_.pose.pose.position.x - radiation_pose_.pose.pose.position.x);
-
-  // calculate the angle bias
-  double closest_dist = 2 * M_PI;
-  double angle_bias   = 0;
-
-  {
-    std::scoped_lock lock(mutex_swarm_uavs_);
-
-    for (std::vector<compton_localization::Swarm>::iterator it = swarm_uavs_list_.begin(); it != swarm_uavs_list_.end(); it++) {
-
-      double dist = radians::dist(it->orbit_angle, current_angle);
-
-      if (abs(dist) < closest_dist) {
-
-        closest_dist = abs(dist);
-        angle_bias   = (dist > 0) ? -0.3 : 0.3;
-      }
-    }
-  }
-
-  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: angle_bias: %2.2f", angle_bias);
-
-  current_angle += angle_bias;
-
-  // create the trajectory
-  mrs_msgs::Reference new_reference;
-
-  new_reference.position.x = radiation_pose_.pose.pose.position.x + params_.tracking_radius * cos(current_angle + 1.0);
-  new_reference.position.y = radiation_pose_.pose.pose.position.y + params_.tracking_radius * sin(current_angle + 1.0);
-  new_reference.position.z = params_.tracking_height;
-  new_reference.heading =
-      atan2(radiation_pose_.pose.pose.position.y - new_reference.position.y, radiation_pose_.pose.pose.position.x - new_reference.position.x);
-
-  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: current angle: %.2f", current_angle);
-
-  return new_reference;
-}
-
-//}
-
 /* generateTrackingTrajectory() //{ */
 
 mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(void) {
@@ -430,8 +374,7 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
   auto params         = mrs_lib::get_mutexed(mutex_params_, params_);
 
   // get current angle
-  double current_angle =
-      atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
+  double current_angle = atan2(odometry.pose.pose.position.y - radiation_pose.pose.pose.position.y, odometry.pose.pose.position.x - radiation_pose.pose.pose.position.x);
 
   double base_angular_change = _tracking_trajectory_speed_ * (_tracking_trajectory_steps_ * tracking_trajectory_dt_) / params.tracking_radius;
   double base_angular_step   = base_angular_change / _tracking_trajectory_steps_;
@@ -443,7 +386,9 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
 
     for (std::vector<compton_localization::Swarm>::iterator it = swarm_uavs_list_.begin(); it != swarm_uavs_list_.end(); it++) {
 
-      double angle = sradians::diff(it->orbit_angle, current_angle);
+      double it_orbit_angle  = atan2(it->odometry.pose.pose.position.y - radiation_pose_.pose.pose.position.y, it->odometry.pose.pose.position.x - radiation_pose_.pose.pose.position.x);
+
+      double angle = sradians::diff(it_orbit_angle, current_angle);
 
       if (abs(angle) < abs(closest_angle)) {
 
@@ -456,13 +401,13 @@ mrs_msgs::TrajectoryReference ComptonLocalization::generateTrackingTrajectory(vo
 
   double min_angular_change = _min_trajectory_speed_ * (_tracking_trajectory_steps_ * tracking_trajectory_dt_) / params.tracking_radius;
 
-  ROS_INFO("[ComptonLocalization]: CURRENT ANGLE: %.2f", current_angle);
-  ROS_INFO("[ComptonLocalization]: CLOSEST ANGLE: %.2f rad", closest_angle);
-  ROS_INFO("[ComptonLocalization]: OPTIMAL SPACING: %.2f", optimal_spacing_angle);
+  /* ROS_INFO("[ComptonLocalization]: CURRENT ANGLE: %.2f", current_angle); */
+  /* ROS_INFO("[ComptonLocalization]: CLOSEST ANGLE: %.2f rad", closest_angle); */
+  /* ROS_INFO("[ComptonLocalization]: OPTIMAL SPACING: %.2f", optimal_spacing_angle); */
 
   // only change by increasing speed
   double change_needed = closest_angle < 0 ? optimal_spacing_angle + closest_angle : closest_angle - optimal_spacing_angle;
-  ROS_INFO("[ComptonLocalization]: CHANGE NEEDED: %.2f", change_needed);
+  /* ROS_INFO("[ComptonLocalization]: CHANGE NEEDED: %.2f", change_needed); */
 
   // prevent backwards motion
   double angular_change = std::max(base_angular_change + change_needed, min_angular_change);
@@ -525,46 +470,22 @@ void ComptonLocalization::timerMain([[maybe_unused]] const ros::TimerEvent &even
 
   auto radiation_pose = mrs_lib::get_mutexed(mutex_radiation_pose_, radiation_pose_);
 
-  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: generating tracking reference");
+  ROS_INFO_THROTTLE(1.0, "[ComptonLocalization]: generating reference trajectory");
 
-  if (_tracking_mode_ == MODE_PATH) {
+  mrs_msgs::TrajectoryReferenceSrv new_reference_srv;
 
-    mrs_msgs::ReferenceStampedSrv new_reference_srv;
+  new_reference_srv.request.trajectory.header.stamp    = ros::Time::now();
+  new_reference_srv.request.trajectory.header.frame_id = radiation_pose.header.frame_id;
 
-    new_reference_srv.request.header.stamp    = ros::Time::now();
-    new_reference_srv.request.header.frame_id = radiation_pose.header.frame_id;
+  new_reference_srv.request.trajectory = generateTrackingTrajectory();
 
-    new_reference_srv.request.reference = generateTrackingReference();
+  bool success = sc_trajectory_reference_.call(new_reference_srv);
 
-    ROS_INFO("[ComptonLocalization]: reference: [%.2f, %.2f, %.2f]", new_reference_srv.request.reference.position.x,
-             new_reference_srv.request.reference.position.y, new_reference_srv.request.reference.position.z);
-
-    bool success = sc_reference_.call(new_reference_srv);
-
-    if (!success) {
-      ROS_ERROR("[ComptonLocalization]: could not call reference service");
-    } else {
-      if (!new_reference_srv.response.success) {
-        ROS_ERROR("[ComptonLocalization]: service call for reference failed: '%s'", new_reference_srv.response.message.c_str());
-      }
-    }
+  if (!success) {
+    ROS_ERROR("[ComptonLocalization]: could not call trajectory service");
   } else {
-
-    mrs_msgs::TrajectoryReferenceSrv new_reference_srv;
-
-    new_reference_srv.request.trajectory.header.stamp    = ros::Time::now();
-    new_reference_srv.request.trajectory.header.frame_id = radiation_pose.header.frame_id;
-
-    new_reference_srv.request.trajectory = generateTrackingTrajectory();
-
-    bool success = sc_trajectory_reference_.call(new_reference_srv);
-
-    if (!success) {
-      ROS_ERROR("[ComptonLocalization]: could not call trajectory service");
-    } else {
-      if (!new_reference_srv.response.success) {
-        ROS_ERROR("[ComptonLocalization]: service call for trajectory failed: '%s'", new_reference_srv.response.message.c_str());
-      }
+    if (!new_reference_srv.response.success) {
+      ROS_ERROR("[ComptonLocalization]: service call for trajectory failed: '%s'", new_reference_srv.response.message.c_str());
     }
   }
 }
@@ -581,16 +502,16 @@ void ComptonLocalization::timerSwarming([[maybe_unused]] const ros::TimerEvent &
 
   compton_localization::Swarm swarm_out;
 
-  swarm_out.orbit_angle =
-      atan2(odometry_.pose.pose.position.y - radiation_pose_.pose.pose.position.y, odometry_.pose.pose.position.x - radiation_pose_.pose.pose.position.x);
+  /* swarm_out.orbit_angle  = atan2(odometry_.pose.pose.position.y - radiation_pose_.pose.pose.position.y, odometry_.pose.pose.position.x - radiation_pose_.pose.pose.position.x); */
   swarm_out.header.stamp = ros::Time::now();
   swarm_out.uav_name     = _uav_name_;
+  swarm_out.odometry     = odometry_;
 
   try {
-    publisher_swarm_control_.publish(swarm_out);
+    publisher_swarm_.publish(swarm_out);
   }
   catch (...) {
-    ROS_ERROR("Exception caught during publishing topic %s.", publisher_swarm_control_.getTopic().c_str());
+    ROS_ERROR("Exception caught during publishing topic %s.", publisher_swarm_.getTopic().c_str());
   }
 }
 

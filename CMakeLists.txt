@@ -23,6 +23,7 @@ set(CATKIN_DEPENDENCIES
   rospy
   sensor_msgs
   std_msgs
+  nav_msgs
   )
 
 find_package(catkin REQUIRED COMPONENTS
@@ -43,6 +44,7 @@ generate_messages(DEPENDENCIES
   std_msgs
   geometry_msgs
   sensor_msgs
+  nav_msgs
   )
 
 catkin_package(
